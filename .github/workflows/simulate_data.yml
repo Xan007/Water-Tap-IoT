@@ -17,6 +17,7 @@ on:
 jobs:
   simulate:
     runs-on: ubuntu-latest
+    environment: ReportEnv
 
     steps:
       - name: Checkout repo

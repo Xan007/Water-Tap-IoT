@@ -14,7 +14,7 @@ warnings.simplefilter("ignore", MissingPivotFunction)
 # -----------------------------
 # CONFIGURACIÓN (Variables de entorno)
 # -----------------------------
-INFLUX_URL = os.environ.get("INFLUXDB_URL")
+INFLUX_URL = os.environ("INFLUXDB_URL")
 INFLUX_TOKEN = os.environ.get("INFLUXDB_TOKEN")
 SUPABASE_URL = os.environ.get("SUPABASE_URL")
 SUPABASE_KEY = os.environ.get("SUPABASE_KEY")

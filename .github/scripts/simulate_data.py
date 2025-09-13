@@ -25,13 +25,13 @@ def generate_school_data(sensor_id: int, timestamp: datetime):
     weekday = timestamp.weekday()  # 0 = lunes, 6 = domingo
 
     # ----------- FLAGS DE EVENTOS ESPECIALES -----------
-    weekend_event = (weekday in [5, 6]) and random.random() < 0.1  # 10% chance evento fin de semana
-    turbidity_event = random.random() < 0.02  # 2% chance de pico de turbidez
+    weekend_event = (weekday in [5, 6]) and random.random() < 0.1
+    turbidity_event = random.random() < 0.02
 
     # ----------- FLUJO BASE -----------
-    base_flow = 0.2  # consumo casi nulo
+    base_flow = 0.2
     if weekday in [5, 6] and not weekend_event:
-        base_flow = 0.2 + random.uniform(0, 0.3)  # fin de semana normal
+        base_flow = 0.2 + random.uniform(0, 0.3)
     else:
         if 8 <= hour < 9:
             base_flow = 5 + random.uniform(-0.5, 1.0)
@@ -49,12 +49,12 @@ def generate_school_data(sensor_id: int, timestamp: datetime):
             base_flow = 2 + random.uniform(-0.5, 0.5)
 
         if weekend_event:
-            base_flow *= random.uniform(3, 6)  # gran evento escolar en finde
+            base_flow *= random.uniform(3, 6)
 
     # ----------- TURBIDEZ -----------
     turbidity = (base_flow * 0.4) + random.uniform(0, 1.0)
     if turbidity_event:
-        turbidity += random.uniform(3, 8)  # pico de turbidez
+        turbidity += random.uniform(3, 8)
 
     # ----------- pH -----------
     ph = 7 + random.uniform(-0.2, 0.2)
@@ -77,20 +77,24 @@ def run_generator(write_api):
     if START_DATE:
         start = datetime.fromisoformat(START_DATE).replace(tzinfo=timezone.utc)
         end = datetime.fromisoformat(END_DATE).replace(tzinfo=timezone.utc) if END_DATE else datetime.now(timezone.utc)
-        
+
         current = start
+        points = []
+
         while current <= end:
             for sensor_id in range(1, NUM_SENSORS + 1):
-                point = generate_school_data(sensor_id, current)
-                write_api.write(bucket=INFLUX_BUCKET, record=point)
-            current += timedelta(minutes=15)  # frecuencia: cada 15 minutos
-        print(f"✅ Datos generados de {start} a {end} para {NUM_SENSORS} sensores")
+                points.append(generate_school_data(sensor_id, current))
+            current += timedelta(minutes=15)
+
+        # Escritura en un solo batch
+        write_api.write(bucket=INFLUX_BUCKET, record=points)
+        print(f"✅ Datos generados de {start} a {end} para {NUM_SENSORS} sensores "
+              f"({len(points)} puntos)")
     else:
-        # Solo un dato (tiempo real)
+        # Solo un dato en tiempo real
         now = datetime.now(timezone.utc)
-        for sensor_id in range(1, NUM_SENSORS + 1):
-            point = generate_school_data(sensor_id, now)
-            write_api.write(bucket=INFLUX_BUCKET, record=point)
+        points = [generate_school_data(sensor_id, now) for sensor_id in range(1, NUM_SENSORS + 1)]
+        write_api.write(bucket=INFLUX_BUCKET, record=points)
         print(f"✅ Dato único generado para {NUM_SENSORS} sensores en {now}")
 
 # -----------------------------
@@ -98,5 +102,5 @@ def run_generator(write_api):
 # -----------------------------
 if __name__ == "__main__":
     with InfluxDBClient(url=INFLUX_URL, token=INFLUX_TOKEN, org=INFLUX_ORG) as influx_client:
-        with influx_client.write_api(write_options=WriteOptions(batch_size=1)) as write_api:
+        with influx_client.write_api(write_options=WriteOptions(batch_size=5000, flush_interval=10000)) as write_api:
             run_generator(write_api)

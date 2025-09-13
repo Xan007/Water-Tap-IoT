@@ -17,12 +17,6 @@ END_DATE = os.environ.get("END_DATE")      # formato "YYYY-MM-DD" (opcional)
 NUM_SENSORS = int(os.environ.get("NUM_SENSORS", "4"))
 
 # -----------------------------
-# CONEXIÓN
-# -----------------------------
-influx_client = InfluxDBClient(url=INFLUX_URL, token=INFLUX_TOKEN, org=INFLUX_ORG)
-write_api = influx_client.write_api(write_options=WriteOptions(batch_size=1))
-
-# -----------------------------
 # GENERADOR REALISTA (COLEGIO)
 # -----------------------------
 def generate_school_data(sensor_id: int, timestamp: datetime):
@@ -79,7 +73,7 @@ def generate_school_data(sensor_id: int, timestamp: datetime):
 # -----------------------------
 # SIMULACIÓN
 # -----------------------------
-def run_generator():
+def run_generator(write_api):
     if START_DATE:
         start = datetime.fromisoformat(START_DATE).replace(tzinfo=timezone.utc)
         end = datetime.fromisoformat(END_DATE).replace(tzinfo=timezone.utc) if END_DATE else datetime.now(timezone.utc)
@@ -103,4 +97,6 @@ def run_generator():
 # MAIN
 # -----------------------------
 if __name__ == "__main__":
-    run_generator()
+    with InfluxDBClient(url=INFLUX_URL, token=INFLUX_TOKEN, org=INFLUX_ORG) as influx_client:
+        with influx_client.write_api(write_options=WriteOptions(batch_size=1)) as write_api:
+            run_generator(write_api)

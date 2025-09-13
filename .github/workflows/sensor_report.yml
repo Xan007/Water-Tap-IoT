@@ -23,6 +23,20 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r .github/scripts/requirements.txt
 
+      - name: Debug env
+        env:
+          INFLUXDB_URL: ${{ secrets.INFLUX_URL }}
+          INFLUXDB_TOKEN: ${{ secrets.INFLUXDB_TOKEN }}
+          INFLUXDB_ORG: ${{ secrets.INFLUXDB_ORG }}
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+        run: |
+          echo "INFLUXDB_URL=$INFLUXDB_URL"
+          echo "INFLUXDB_ORG=$INFLUXDB_ORG"
+          echo "SUPABASE_URL=$SUPABASE_URL"
+          echo "SUPABASE_KEY length: ${#SUPABASE_KEY}"
+          echo "INFLUXDB_TOKEN length: ${#INFLUXDB_TOKEN}"
+
       - name: Run ETL
         env:
           INFLUXDB_URL: ${{ secrets.INFLUX_URL }}

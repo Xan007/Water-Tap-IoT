@@ -31,4 +31,4 @@ jobs:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
         run: |
-          python .github/scripts/sensor_report/sync_influx_supabase.py
+          python .github/scripts/sync_influx_supabase.py

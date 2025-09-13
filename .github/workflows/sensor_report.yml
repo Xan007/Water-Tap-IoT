@@ -25,8 +25,9 @@ jobs:
 
       - name: Run ETL
         env:
-          INFLUXDB_URL: ${{ secrets.INFLUXDB_URL }}
+          INFLUXDB_URL: ${{ secrets.INFLUX_URL }}
           INFLUXDB_TOKEN: ${{ secrets.INFLUXDB_TOKEN }}
+          INFLUXDB_ORG: ${{ secrets.INFLUXDB_ORG }}
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
         run: |

@@ -34,7 +34,7 @@ jobs:
 
       - name: Run Simulator
         env:
-          INFLUXDB_URL: ${{ secrets.INFLUXDB_URL }}
+          INFLUXDB_URL: ${{ secrets.INFLUX_URL }}
           INFLUXDB_TOKEN: ${{ secrets.INFLUXDB_TOKEN }}
           INFLUXDB_ORG: ${{ secrets.INFLUXDB_ORG }}
           START_DATE: ${{ github.event.inputs.start_date }}

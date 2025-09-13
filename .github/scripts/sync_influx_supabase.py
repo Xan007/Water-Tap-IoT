@@ -14,11 +14,11 @@ warnings.simplefilter("ignore", MissingPivotFunction)
 # -----------------------------
 # CONFIGURACIÓN (Variables de entorno)
 # -----------------------------
-INFLUX_URL = os.getenv("INFLUXDB_URL")
-INFLUX_TOKEN = os.getenv("INFLUXDB_TOKEN")
-SUPABASE_URL = os.getenv("SUPABASE_URL")
-SUPABASE_KEY = os.getenv("SUPABASE_KEY")
-INFLUX_ORG = os.getenv("INFLUXDB_ORG")
+INFLUX_URL = os.environ.get("INFLUXDB_URL")
+INFLUX_TOKEN = os.environ.get("INFLUXDB_TOKEN")
+SUPABASE_URL = os.environ.get("SUPABASE_URL")
+SUPABASE_KEY = os.environ.get("SUPABASE_KEY")
+INFLUX_ORG = os.environ.get("INFLUXDB_ORG")
 
 # -----------------------------
 # CONEXIÓN A SUPABASE

@@ -6,15 +6,15 @@ from influxdb_client import InfluxDBClient, Point, WriteOptions
 # -----------------------------
 # CONFIGURACIÓN (ENV o default)
 # -----------------------------
-INFLUX_URL = os.getenv("INFLUXDB_URL")
-INFLUX_TOKEN = os.getenv("INFLUXDB_TOKEN")
-INFLUX_ORG = os.getenv("INFLUXDB_ORG")
-INFLUX_BUCKET = os.getenv("INFLUX_BUCKET", "datos_agua")
+INFLUX_URL = os.environ.get("INFLUXDB_URL")
+INFLUX_TOKEN = os.environ.get("INFLUXDB_TOKEN")
+INFLUX_ORG = os.environ.get("INFLUXDB_ORG")
+INFLUX_BUCKET = os.environ.get("INFLUX_BUCKET", "datos_agua")
 
 # Parámetros simulación
-START_DATE = os.getenv("START_DATE")  # formato "YYYY-MM-DD"
-END_DATE = os.getenv("END_DATE")      # formato "YYYY-MM-DD" (opcional)
-NUM_SENSORS = int(os.getenv("NUM_SENSORS", "4"))
+START_DATE = os.environ.get("START_DATE")  # formato "YYYY-MM-DD"
+END_DATE = os.environ.get("END_DATE")      # formato "YYYY-MM-DD" (opcional)
+NUM_SENSORS = int(os.environ.get("NUM_SENSORS", "4"))
 
 # -----------------------------
 # CONEXIÓN

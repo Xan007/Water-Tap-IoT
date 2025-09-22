@@ -36,57 +36,42 @@ public class SensorDataService {
         return querySensorData(sql, Map.of());
     }
 
-    public List<SensorRecordDTO> getHistoryRaw(Instant from, Instant to) {
-        String sql = "SELECT * " +
-                "FROM 'water_sensors' " +
-                "WHERE time >= :from AND time <= :to " +
-                "ORDER BY time ASC";
+    public List<SensorRecordDTO> getHistory(Instant from, Instant to) {
+        long days = Duration.between(from, to).toDays();
+        System.out.println(days);
 
+        String sql;
         Map<String, Object> params = Map.of(
                 "from", from.toString(),
                 "to", to.toString()
         );
 
-        return querySensorData(sql, params);
-    }
-
-    private Duration pickChunkSize(Instant from, Instant to) {
-        long days = Duration.between(from, to).toDays();
-
-        if (days <= 7) return Duration.ofDays(1);
-        if (days <= 30) return Duration.ofDays(5);
-        if (days <= 90) return Duration.ofDays(10);
-        if (days <= 180) return Duration.ofDays(15);
-        return Duration.ofDays(30);
-    }
-
-    public List<SensorRecordDTO> getHistory(Instant from, Instant to) {
-        Duration chunkSize = pickChunkSize(from, to);
-        List<TimeRange> ranges = splitIntoChunks(from, to, chunkSize);
-
-        return ranges.parallelStream()
-                .map(r -> getHistoryRaw(r.start(), r.end()))
-                .flatMap(List::stream)
-                .toList();
-    }
-
-
-    private List<TimeRange> splitIntoChunks(Instant from, Instant to, Duration chunkSize) {
-        List<TimeRange> chunks = new ArrayList<>();
-        Instant currentStart = from;
-
-        while (!currentStart.isAfter(to)) {
-            Instant currentEnd = currentStart.plus(chunkSize);
-            if (currentEnd.isAfter(to)) {
-                currentEnd = to;
-            }
-
-            chunks.add(new TimeRange(currentStart, currentEnd));
-
-            currentStart = currentEnd;
+        if (days <= 2) {
+            // Datos crudos
+            sql = "SELECT * " +
+                    "FROM 'water_sensors' " +
+                    "WHERE time >= :from AND time <= :to " +
+                    "ORDER BY time ASC";
+        } else if (days <= 5) {
+            // Promedios por hora
+            sql = "SELECT * " +
+                    "FROM 'view_sensors' " +
+                    "WHERE time >= :from AND time <= :to " +
+                    "  AND agg = '1h' " +
+                    "ORDER BY time ASC";
+        } else {
+            // Promedios por día
+            sql = "SELECT * " +
+                    "FROM 'view_sensors' " +
+                    "WHERE time >= :from AND time <= :to " +
+                    "  AND agg = '1d' " +
+                    "ORDER BY time ASC";
         }
 
-        return chunks;
+        System.out.println(sql);
+        System.out.println(params);
+
+        return querySensorData(sql, params);
     }
 
     private record TimeRange(Instant start, Instant end) {}
@@ -135,7 +120,6 @@ public class SensorDataService {
                 new QueryOptions("datos_agua", QueryType.SQL)
         )) {
             return results
-                    .parallel()
                     .map(pv -> SensorRecordDTO.fromRaw(
                             new SensorRawRecord(
                                     getInstant(pv),

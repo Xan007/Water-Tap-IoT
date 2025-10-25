@@ -1,4 +1,1 @@
 influxdb-client
-pandas
-supabase
-python-dotenv

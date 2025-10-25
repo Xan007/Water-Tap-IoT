@@ -152,8 +152,16 @@ class SensorSimulator:
         if self.rnd.random() < self.turbidity_spike_prob:
             turbidity += self.rnd.uniform(self.SPIKE_MIN, self.SPIKE_MAX)  # pico esporádico configurable
 
-        # --- pH cerca de 7 ---
-        ph = round(7.0 + self.rnd.uniform(-0.08, 0.08), 2)
+        # --- pH: base cerca de 7, afecta agua sucia y pequeños desvíos ocasionales ---
+        ph_val = 7.0 + self.rnd.uniform(-0.08, 0.08)
+        if s['dirty_active']:
+            # Agua más sucia tiende a bajar ligeramente el pH
+            ph_val -= self.rnd.uniform(0.2, 0.5)
+        # Pequeños desvíos esporádicos (ácido o básico)
+        if self.rnd.random() < 0.005:
+            ph_val += self.rnd.choice([-1, 1]) * self.rnd.uniform(0.15, 0.35)
+        # Limitar a rango razonable
+        ph = round(max(6.0, min(8.5, ph_val)), 2)
 
         # --- Conductividad estable alrededor de un valor base ---
         conductivity = round(s['cond_base'] + self.rnd.uniform(-8, 8), 2)

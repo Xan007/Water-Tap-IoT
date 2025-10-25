@@ -38,9 +38,32 @@ class SensorSimulator:
     Notas: caudal ('flowRate') aproximado en L/min.
     """
 
-    def __init__(self, n_sensors: int, seed: Optional[int] = None):
+    def __init__(self, n_sensors: int, seed: Optional[int] = None,
+                 open_prob_per_hour: float = 0.05,
+                 dirty_prob_per_hour: float = 0.2,
+                 turbidity_spike_prob: float = 0.01):
         self.n = max(1, int(n_sensors))
         self.rnd = random.Random(seed)
+
+        # Parámetros de anomalías (frecuencia configurable)
+        self.open_prob_per_hour = max(0.0, float(open_prob_per_hour))
+        self.dirty_prob_per_hour = max(0.0, float(dirty_prob_per_hour))
+        self.turbidity_spike_prob = max(0.0, min(1.0, float(turbidity_spike_prob)))
+
+        # Severidades/duraciones por defecto para anomalías
+        self.OPEN_MIN_S = 300.0   # 5 min
+        self.OPEN_MAX_S = 900.0   # 15 min
+        self.OPEN_FLOW_MIN = 6.0  # L/min
+        self.OPEN_FLOW_MAX = 10.0 # L/min
+
+        self.DIRTY_MIN_S = 300.0   # 5 min
+        self.DIRTY_MAX_S = 1200.0  # 20 min
+        self.DIRTY_EXTRA_MIN = 1.0 # NTU
+        self.DIRTY_EXTRA_MAX = 3.0 # NTU
+
+        self.SPIKE_MIN = 2.0 # NTU
+        self.SPIKE_MAX = 5.0 # NTU
+
         self.state = {}
         for i in range(1, self.n + 1):
             self.state[i] = {
@@ -50,6 +73,14 @@ class SensorSimulator:
                 'type': None,  # 'sink' | 'fountain'
                 'cond_base': self.rnd.uniform(180, 350),
                 'use_rate_per_min': self.rnd.uniform(0.08, 0.2),  # 5-12 usos/h aprox
+                # Anomalía de llave abierta
+                'open_active': False,
+                'open_remaining_s': 0.0,
+                'open_flow_lpm': 0.0,
+                # Periodo de agua sucia
+                'dirty_active': False,
+                'dirty_remaining_s': 0.0,
+                'dirty_extra_ntu': 0.0,
             }
 
     def _maybe_start_event(self, s):
@@ -67,33 +98,64 @@ class SensorSimulator:
     def sample(self, sensor_id: int, timestamp: datetime, dt_seconds: float):
         s = self.state[sensor_id]
 
-        # Si está activo, continúa; si no, chance de arrancar evento en esta ventana
-        if not s['active']:
-            p = min(0.95, s['use_rate_per_min'] * dt_seconds / 60.0)
-            if self.rnd.random() < p:
-                self._maybe_start_event(s)
+        # --- Actualizar/arrancar anomalía de llave abierta ---
+        if not s['open_active']:
+            p_open = min(0.95, self.open_prob_per_hour * (dt_seconds / 3600.0))
+            if self.rnd.random() < p_open:
+                s['open_active'] = True
+                s['open_remaining_s'] = self.rnd.uniform(self.OPEN_MIN_S, self.OPEN_MAX_S)
+                s['open_flow_lpm'] = self.rnd.uniform(self.OPEN_FLOW_MIN, self.OPEN_FLOW_MAX)
         else:
-            s['remaining_s'] -= dt_seconds
-            if s['remaining_s'] <= 0:
-                s['active'] = False
-                s['target_flow_lpm'] = 0.0
-                s['type'] = None
+            s['open_remaining_s'] -= dt_seconds
+            if s['open_remaining_s'] <= 0:
+                s['open_active'] = False
+                s['open_flow_lpm'] = 0.0
 
-        # Caudal
-        if s['active']:
+        # --- Actualizar/arrancar periodo de agua sucia ---
+        if not s['dirty_active']:
+            p_dirty = min(0.95, self.dirty_prob_per_hour * (dt_seconds / 3600.0))
+            if self.rnd.random() < p_dirty:
+                s['dirty_active'] = True
+                s['dirty_remaining_s'] = self.rnd.uniform(self.DIRTY_MIN_S, self.DIRTY_MAX_S)
+                s['dirty_extra_ntu'] = self.rnd.uniform(self.DIRTY_EXTRA_MIN, self.DIRTY_EXTRA_MAX)
+        else:
+            s['dirty_remaining_s'] -= dt_seconds
+            if s['dirty_remaining_s'] <= 0:
+                s['dirty_active'] = False
+                s['dirty_extra_ntu'] = 0.0
+
+        # --- Eventos normales de uso (solo si NO hay llave abierta) ---
+        if not s['open_active']:
+            if not s['active']:
+                p = min(0.95, s['use_rate_per_min'] * dt_seconds / 60.0)
+                if self.rnd.random() < p:
+                    self._maybe_start_event(s)
+            else:
+                s['remaining_s'] -= dt_seconds
+                if s['remaining_s'] <= 0:
+                    s['active'] = False
+                    s['target_flow_lpm'] = 0.0
+                    s['type'] = None
+
+        # --- Caudal ---
+        if s['open_active']:
+            flow = max(0.0, self.rnd.normalvariate(s['open_flow_lpm'], s['open_flow_lpm'] * 0.06))
+        elif s['active']:
             flow = max(0.0, self.rnd.normalvariate(s['target_flow_lpm'], s['target_flow_lpm'] * 0.1))
         else:
             flow = max(0.0, self.rnd.uniform(0.0, 0.2))  # goteo minúsculo
 
-        # Turbidez (NTU) correlacionada con caudal + ruido ligero
+        # --- Turbidez (NTU) correlacionada con caudal + ruido ligero ---
         turbidity = max(0.0, 0.3 + 0.12 * flow + self.rnd.uniform(-0.05, 0.15))
-        if self.rnd.random() < 0.01:
-            turbidity += self.rnd.uniform(2.0, 5.0)  # pico esporádico
+        if s['dirty_active']:
+            turbidity += s['dirty_extra_ntu']
+        if self.rnd.random() < self.turbidity_spike_prob:
+            turbidity += self.rnd.uniform(self.SPIKE_MIN, self.SPIKE_MAX)  # pico esporádico configurable
 
-        # pH cerca de 7
+        # --- pH cerca de 7 ---
         ph = round(7.0 + self.rnd.uniform(-0.08, 0.08), 2)
 
-        # Conductividad estable alrededor de un valor base
+        # --- Conductividad estable alrededor de un valor base ---
         conductivity = round(s['cond_base'] + self.rnd.uniform(-8, 8), 2)
 
         return {
@@ -156,6 +218,13 @@ def main(argv=None):
     p.add_argument('--interval', '-i', type=float, default=5.0, help='Intervalo entre lecturas (segundos)')
     p.add_argument('--duration', '-d', type=str, default=None, help="Duración total: segundos o '1h','30m','45s'")
     p.add_argument('--seed', type=int, default=None, help='Semilla opcional para reproducibilidad')
+    # Frecuencias de eventos exagerados
+    p.add_argument('--open-prob-per-hour', type=float, default=0.05,
+                   help='Probabilidad por hora de evento "llave abierta" por sensor (0..1).')
+    p.add_argument('--dirty-prob-per-hour', type=float, default=0.2,
+                   help='Probabilidad por hora de periodo de "agua más sucia" por sensor (0..1).')
+    p.add_argument('--turbidity-spike-prob', type=float, default=0.01,
+                   help='Probabilidad por muestra de pico de turbidez (0..1).')
     args = p.parse_args(argv)
 
     duration = parse_duration(args.duration)
@@ -170,7 +239,13 @@ def main(argv=None):
     if missing:
         raise SystemExit(f"Faltan variables de entorno para InfluxDB: {', '.join(missing)}")
 
-    sim = SensorSimulator(args.sensors, seed=args.seed)
+    sim = SensorSimulator(
+        args.sensors,
+        seed=args.seed,
+        open_prob_per_hour=args.open_prob_per_hour,
+        dirty_prob_per_hour=args.dirty_prob_per_hour,
+        turbidity_spike_prob=args.turbidity_spike_prob,
+    )
     print(f"Simulando {sim.n} sensores, intervalo={args.interval}s, destino=InfluxDB bucket={influx_cfg['bucket']}")
     if duration is not None:
         print(f"Duración: {duration} segundos")

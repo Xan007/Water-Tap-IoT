@@ -15,6 +15,18 @@ on:
         description: "Duración total (e.g. 1h, 30m, 45s)."
         required: false
         default: "5m"
+      open_prob_per_hour:
+        description: "Probabilidad/hora de 'llave abierta' por sensor (0..1)"
+        required: false
+        default: "0.05"
+      dirty_prob_per_hour:
+        description: "Probabilidad/hora de periodo 'agua sucia' por sensor (0..1)"
+        required: false
+        default: "0.2"
+      turbidity_spike_prob:
+        description: "Probabilidad por muestra de pico de turbidez (0..1)"
+        required: false
+        default: "0.01"
       seed:
         description: "Semilla aleatoria (opcional)"
         required: false
@@ -55,6 +67,15 @@ jobs:
           fi
           if [[ -n "${{ github.event.inputs.seed }}" ]]; then
             CMD+=(--seed "${{ github.event.inputs.seed }}")
+          fi
+          if [[ -n "${{ github.event.inputs.open_prob_per_hour }}" ]]; then
+            CMD+=(--open-prob-per-hour "${{ github.event.inputs.open_prob_per_hour }}")
+          fi
+          if [[ -n "${{ github.event.inputs.dirty_prob_per_hour }}" ]]; then
+            CMD+=(--dirty-prob-per-hour "${{ github.event.inputs.dirty_prob_per_hour }}")
+          fi
+          if [[ -n "${{ github.event.inputs.turbidity_spike_prob }}" ]]; then
+            CMD+=(--turbidity-spike-prob "${{ github.event.inputs.turbidity_spike_prob }}")
           fi
 
           echo "Running: ${CMD[@]}"

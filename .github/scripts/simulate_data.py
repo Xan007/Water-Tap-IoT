@@ -41,7 +41,8 @@ class SensorSimulator:
     def __init__(self, n_sensors: int, seed: Optional[int] = None,
                  open_prob_per_hour: float = 0.05,
                  dirty_prob_per_hour: float = 0.2,
-                 turbidity_spike_prob: float = 0.01):
+                 turbidity_spike_prob: float = 0.01,
+                 intensity: float = 1.0):
         self.n = max(1, int(n_sensors))
         self.rnd = random.Random(seed)
 
@@ -49,6 +50,8 @@ class SensorSimulator:
         self.open_prob_per_hour = max(0.0, float(open_prob_per_hour))
         self.dirty_prob_per_hour = max(0.0, float(dirty_prob_per_hour))
         self.turbidity_spike_prob = max(0.0, min(1.0, float(turbidity_spike_prob)))
+        # Intensidad global de desviaciones (magnitud)
+        self.intensity = max(0.1, float(intensity))
 
         # Severidades/duraciones por defecto para anomalías
         self.OPEN_MIN_S = 300.0   # 5 min
@@ -104,7 +107,8 @@ class SensorSimulator:
             if self.rnd.random() < p_open:
                 s['open_active'] = True
                 s['open_remaining_s'] = self.rnd.uniform(self.OPEN_MIN_S, self.OPEN_MAX_S)
-                s['open_flow_lpm'] = self.rnd.uniform(self.OPEN_FLOW_MIN, self.OPEN_FLOW_MAX)
+                base_flow = self.rnd.uniform(self.OPEN_FLOW_MIN, self.OPEN_FLOW_MAX)
+                s['open_flow_lpm'] = max(0.0, base_flow * self.intensity)
         else:
             s['open_remaining_s'] -= dt_seconds
             if s['open_remaining_s'] <= 0:
@@ -139,32 +143,33 @@ class SensorSimulator:
 
         # --- Caudal ---
         if s['open_active']:
-            flow = max(0.0, self.rnd.normalvariate(s['open_flow_lpm'], s['open_flow_lpm'] * 0.06))
+            flow = max(0.0, self.rnd.normalvariate(s['open_flow_lpm'], s['open_flow_lpm'] * (0.06 * self.intensity)))
         elif s['active']:
-            flow = max(0.0, self.rnd.normalvariate(s['target_flow_lpm'], s['target_flow_lpm'] * 0.1))
+            flow = max(0.0, self.rnd.normalvariate(s['target_flow_lpm'], s['target_flow_lpm'] * (0.10 * self.intensity)))
         else:
-            flow = max(0.0, self.rnd.uniform(0.0, 0.2))  # goteo minúsculo
+            # goteo minúsculo con leve efecto de intensidad (cap a 1.0 L/min)
+            flow = max(0.0, self.rnd.uniform(0.0, min(0.2 * self.intensity, 1.0)))
 
         # --- Turbidez (NTU) correlacionada con caudal + ruido ligero ---
-        turbidity = max(0.0, 0.3 + 0.12 * flow + self.rnd.uniform(-0.05, 0.15))
+        turbidity = max(0.0, 0.3 + 0.12 * flow + self.rnd.uniform(-0.05, 0.15) * self.intensity)
         if s['dirty_active']:
-            turbidity += s['dirty_extra_ntu']
+            turbidity += s['dirty_extra_ntu'] * self.intensity
         if self.rnd.random() < self.turbidity_spike_prob:
-            turbidity += self.rnd.uniform(self.SPIKE_MIN, self.SPIKE_MAX)  # pico esporádico configurable
+            turbidity += self.rnd.uniform(self.SPIKE_MIN, self.SPIKE_MAX) * self.intensity  # pico configurable
 
         # --- pH: base cerca de 7, afecta agua sucia y pequeños desvíos ocasionales ---
-        ph_val = 7.0 + self.rnd.uniform(-0.08, 0.08)
+        ph_val = 7.0 + self.rnd.uniform(-0.08, 0.08) * self.intensity
         if s['dirty_active']:
             # Agua más sucia tiende a bajar ligeramente el pH
-            ph_val -= self.rnd.uniform(0.2, 0.5)
+            ph_val -= self.rnd.uniform(0.2, 0.5) * self.intensity
         # Pequeños desvíos esporádicos (ácido o básico)
         if self.rnd.random() < 0.005:
-            ph_val += self.rnd.choice([-1, 1]) * self.rnd.uniform(0.15, 0.35)
+            ph_val += self.rnd.choice([-1, 1]) * self.rnd.uniform(0.15, 0.35) * self.intensity
         # Limitar a rango razonable
         ph = round(max(6.0, min(8.5, ph_val)), 2)
 
         # --- Conductividad estable alrededor de un valor base ---
-        conductivity = round(s['cond_base'] + self.rnd.uniform(-8, 8), 2)
+        conductivity = round(s['cond_base'] + self.rnd.uniform(-8, 8) * self.intensity, 2)
 
         return {
             'sensor_id': sensor_id,
@@ -233,6 +238,9 @@ def main(argv=None):
                    help='Probabilidad por hora de periodo de "agua más sucia" por sensor (0..1).')
     p.add_argument('--turbidity-spike-prob', type=float, default=0.01,
                    help='Probabilidad por muestra de pico de turbidez (0..1).')
+    # Intensidad global
+    p.add_argument('--intensity', type=float, default=1.0,
+                   help='Factor global de intensidad de desviaciones (magnitud: caudal, turbidez, pH, conductividad).')
     args = p.parse_args(argv)
 
     duration = parse_duration(args.duration)
@@ -253,6 +261,7 @@ def main(argv=None):
         open_prob_per_hour=args.open_prob_per_hour,
         dirty_prob_per_hour=args.dirty_prob_per_hour,
         turbidity_spike_prob=args.turbidity_spike_prob,
+        intensity=args.intensity,
     )
     print(f"Simulando {sim.n} sensores, intervalo={args.interval}s, destino=InfluxDB bucket={influx_cfg['bucket']}")
     if duration is not None:

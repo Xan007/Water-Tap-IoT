@@ -27,6 +27,10 @@ on:
         description: "Probabilidad por muestra de pico de turbidez (0..1)"
         required: false
         default: "0.01"
+      intensity:
+        description: "Intensidad global de desviaciones (magnitud)"
+        required: false
+        default: "1.0"
       seed:
         description: "Semilla aleatoria (opcional)"
         required: false
@@ -76,6 +80,9 @@ jobs:
           fi
           if [[ -n "${{ github.event.inputs.turbidity_spike_prob }}" ]]; then
             CMD+=(--turbidity-spike-prob "${{ github.event.inputs.turbidity_spike_prob }}")
+          fi
+          if [[ -n "${{ github.event.inputs.intensity }}" ]]; then
+            CMD+=(--intensity "${{ github.event.inputs.intensity }}")
           fi
 
           echo "Running: ${CMD[@]}"

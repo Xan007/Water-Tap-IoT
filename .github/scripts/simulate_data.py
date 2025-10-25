@@ -30,29 +30,71 @@ def now_utc() -> datetime:
 
 
 class SensorSimulator:
+    """
+    Genera datos con patrón de uso parecido a lavamanos/bebedero:
+    - Eventos cortos e intermitentes (segundos), con caudal mayor durante el uso.
+    - Caudal en reposo ~0.
+    - Turbidez correlacionada con caudal, pH estable ~7, conductividad estable con pequeño ruido.
+    Notas: caudal ('flowRate') aproximado en L/min.
+    """
+
     def __init__(self, n_sensors: int, seed: Optional[int] = None):
         self.n = max(1, int(n_sensors))
         self.rnd = random.Random(seed)
-        self.baselines = {}
+        self.state = {}
         for i in range(1, self.n + 1):
-            self.baselines[i] = {
-                'flow': self.rnd.uniform(0.1, 5.0),
-                'turbidity': self.rnd.uniform(0.1, 2.0),
-                'ph': self.rnd.uniform(6.8, 7.5),
-                'conductivity': self.rnd.uniform(150, 400),
+            self.state[i] = {
+                'active': False,
+                'remaining_s': 0.0,
+                'target_flow_lpm': 0.0,
+                'type': None,  # 'sink' | 'fountain'
+                'cond_base': self.rnd.uniform(180, 350),
+                'use_rate_per_min': self.rnd.uniform(0.08, 0.2),  # 5-12 usos/h aprox
             }
 
-    def sample(self, sensor_id: int, timestamp: datetime):
-        b = self.baselines[sensor_id]
-        flow = max(0.0, b['flow'] + self.rnd.uniform(-0.5, 0.5))
-        turbidity = max(0.0, b['turbidity'] + self.rnd.uniform(-0.2, 0.8))
-        ph = round(b['ph'] + self.rnd.uniform(-0.1, 0.1), 2)
-        conductivity = round(b['conductivity'] + self.rnd.uniform(-10, 10), 2)
+    def _maybe_start_event(self, s):
+        # 50/50 lavamanos vs bebedero
+        if self.rnd.random() < 0.5:
+            s['type'] = 'sink'
+            s['remaining_s'] = self.rnd.uniform(10, 30)
+            s['target_flow_lpm'] = self.rnd.uniform(4.0, 8.0)
+        else:
+            s['type'] = 'fountain'
+            s['remaining_s'] = self.rnd.uniform(5, 15)
+            s['target_flow_lpm'] = self.rnd.uniform(1.0, 3.0)
+        s['active'] = True
 
+    def sample(self, sensor_id: int, timestamp: datetime, dt_seconds: float):
+        s = self.state[sensor_id]
+
+        # Si está activo, continúa; si no, chance de arrancar evento en esta ventana
+        if not s['active']:
+            p = min(0.95, s['use_rate_per_min'] * dt_seconds / 60.0)
+            if self.rnd.random() < p:
+                self._maybe_start_event(s)
+        else:
+            s['remaining_s'] -= dt_seconds
+            if s['remaining_s'] <= 0:
+                s['active'] = False
+                s['target_flow_lpm'] = 0.0
+                s['type'] = None
+
+        # Caudal
+        if s['active']:
+            flow = max(0.0, self.rnd.normalvariate(s['target_flow_lpm'], s['target_flow_lpm'] * 0.1))
+        else:
+            flow = max(0.0, self.rnd.uniform(0.0, 0.2))  # goteo minúsculo
+
+        # Turbidez (NTU) correlacionada con caudal + ruido ligero
+        turbidity = max(0.0, 0.3 + 0.12 * flow + self.rnd.uniform(-0.05, 0.15))
         if self.rnd.random() < 0.01:
-            turbidity += self.rnd.uniform(3, 8)
-        if self.rnd.random() < 0.005:
-            flow *= self.rnd.uniform(0.2, 4)
+            turbidity += self.rnd.uniform(2.0, 5.0)  # pico esporádico
+
+        # pH cerca de 7
+        ph = round(7.0 + self.rnd.uniform(-0.08, 0.08), 2)
+
+        # Conductividad estable alrededor de un valor base
+        conductivity = round(s['cond_base'] + self.rnd.uniform(-8, 8), 2)
 
         return {
             'sensor_id': sensor_id,
@@ -83,7 +125,7 @@ def run(sim: SensorSimulator, interval: float, duration: Optional[float], influx
         while True:
             for sensor_id in range(1, sim.n + 1):
                 ts = now_utc()
-                r = sim.sample(sensor_id, ts)
+                r = sim.sample(sensor_id, ts, interval)
                 p = Point("water_sensors").tag("sensor_id", str(r['sensor_id'])) \
                     .field("flowRate", float(r['flowRate'])) \
                     .field("turbidity", float(r['turbidity'])) \

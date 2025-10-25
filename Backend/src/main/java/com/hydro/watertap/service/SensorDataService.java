@@ -8,18 +8,21 @@ import com.influxdb.v3.client.PointValues;
 import com.influxdb.v3.client.query.QueryOptions;
 import com.influxdb.v3.client.query.QueryType;
 import com.influxdb.v3.client.write.WriteOptions;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 
 import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
-import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
 import java.util.stream.Stream;
 
 @Service
 public class SensorDataService {
+
+    private static final Logger log = LoggerFactory.getLogger(SensorDataService.class);
 
     private final InfluxDBClient influxDBClient;
 
@@ -28,17 +31,13 @@ public class SensorDataService {
     }
 
     public List<SensorRecordDTO> getRecentSensorData(Integer minutes) {
-        String sql = "SELECT * " +
-                "FROM 'water_sensors' " +
-                "WHERE time >= now() - interval '" + minutes + " minutes' " +
-                "ORDER BY time ASC";
-
+        String sql = "SELECT * FROM 'water_sensors' WHERE time >= now() - interval '" + minutes + " minutes' ORDER BY time ASC";
+        log.debug("Influx SQL recent: {}", sql);
         return querySensorData(sql, Map.of());
     }
 
     public List<SensorRecordDTO> getHistory(Instant from, Instant to) {
         long days = Duration.between(from, to).toDays();
-        System.out.println(days);
 
         String sql;
         Map<String, Object> params = Map.of(
@@ -47,41 +46,51 @@ public class SensorDataService {
         );
 
         if (days <= 2) {
-            // Datos crudos
-            sql = "SELECT * " +
-                    "FROM 'water_sensors' " +
-                    "WHERE time >= :from AND time <= :to " +
-                    "ORDER BY time ASC";
+            sql = "SELECT * FROM 'water_sensors' WHERE time >= :from AND time <= :to ORDER BY time ASC";
         } else if (days <= 5) {
-            // Promedios por hora
-            sql = "SELECT * " +
-                    "FROM 'view_sensors' " +
-                    "WHERE time >= :from AND time <= :to " +
-                    "  AND agg = '1h' " +
-                    "ORDER BY time ASC";
+            sql = "SELECT * FROM 'view_sensors' WHERE time >= :from AND time <= :to AND agg = '1h' ORDER BY time ASC";
         } else {
-            // Promedios por día
-            sql = "SELECT * " +
-                    "FROM 'view_sensors' " +
-                    "WHERE time >= :from AND time <= :to " +
-                    "  AND agg = '1d' " +
-                    "ORDER BY time ASC";
+            sql = "SELECT * FROM 'view_sensors' WHERE time >= :from AND time <= :to AND agg = '1d' ORDER BY time ASC";
         }
-
-        System.out.println(sql);
-        System.out.println(params);
-
+        log.debug("Influx SQL history: {} {}", sql, params);
         return querySensorData(sql, params);
     }
 
-    private record TimeRange(Instant start, Instant end) {}
+    /**
+     * Retorna datos agregados desde la vista view_sensors para el rango indicado y el nivel de agregación solicitado.
+     * Comando básico: solo contra la vista.
+     */
+    public List<SensorRecordDTO> getAggregatedHistory(Instant from, Instant to, String agg) {
+        String sql = "SELECT * FROM 'view_sensors' WHERE time >= :from AND time <= :to AND agg = :agg ORDER BY time ASC";
+        Map<String, Object> params = Map.of(
+                "from", from.toString(),
+                "to", to.toString(),
+                "agg", agg
+        );
+        log.debug("Influx SQL view agg (básico): {} {}", sql, params);
+        return querySensorData(sql, params);
+    }
+
+    private String mapAggToInterval(String agg) {
+        if (agg == null) return "1 hour";
+        String a = agg.trim().toLowerCase();
+        if (a.endsWith("h")) {
+            String n = a.substring(0, a.length() - 1);
+            return n + " hour";
+        } else if (a.endsWith("d")) {
+            String n = a.substring(0, a.length() - 1);
+            return n + " day";
+        } else if (a.endsWith("m")) {
+            String n = a.substring(0, a.length() - 1);
+            return n + " minute";
+        }
+        return "1 hour";
+    }
 
     public void saveSensorData(List<SensorRecordDTO> records) {
         String database = "datos_agua";
-
         List<Point> points = new ArrayList<>();
         Instant stamp = Instant.now().minusSeconds(records.size());
-
         for (SensorRecordDTO record : records) {
             Point point = Point.measurement("water_sensors")
                     .setTag("sensor_id", String.valueOf(record.sensorId()))
@@ -90,14 +99,9 @@ public class SensorDataService {
                     .setFloatField("conductivity", record.conductivity() != null ? record.conductivity() : 0.0)
                     .setFloatField("flowRate", record.flowRate() != null ? record.flowRate() : 0.0)
                     .setTimestamp(record.timestamp() != null ? record.timestamp() : stamp);
-
             points.add(point);
         }
-
-        influxDBClient.writePoints(points,
-                new WriteOptions.Builder()
-                        .database(database)
-                        .build());
+        influxDBClient.writePoints(points, new WriteOptions.Builder().database(database).build());
     }
 
     private Double getDouble(PointValues pv, String field, Double defaultValue) {
@@ -114,16 +118,11 @@ public class SensorDataService {
     }
 
     private List<SensorRecordDTO> querySensorData(String sql, Map<String, Object> params) {
-        try (Stream<PointValues> results = influxDBClient.queryPoints(
-                sql,
-                params,
-                new QueryOptions("datos_agua", QueryType.SQL)
-        )) {
-            return results
-                    .map(pv -> SensorRecordDTO.fromRaw(
+        try (Stream<PointValues> results = influxDBClient.queryPoints(sql, params, new QueryOptions("datos_agua", QueryType.SQL))) {
+            return results.map(pv -> SensorRecordDTO.fromRaw(
                             new SensorRawRecord(
                                     getInstant(pv),
-                                    getTagAsInteger(pv, "sensor_id", null),
+                                    getSensorId(pv),
                                     Map.of(
                                             "ph", getDouble(pv, "ph", null),
                                             "turbidity", getDouble(pv, "turbidity", null),
@@ -131,19 +130,28 @@ public class SensorDataService {
                                             "flowRate", getDouble(pv, "flowRate", null)
                                     )
                             )
-                    ))
-                    .toList();
+                    )).toList();
         }
+    }
+
+    private Integer getSensorId(PointValues pv) {
+        Integer id = getTagAsInteger(pv, "sensor_id", null);
+        if (id != null) return id;
+        // Fallbacks por si viene con otro nombre/ubicación
+        Object v = pv.getField("sensor_id");
+        if (v == null) v = pv.getField("sensorId");
+        if (v == null) v = pv.getTag("sensorId");
+        if (v != null) {
+            try { return Integer.valueOf(v.toString()); } catch (NumberFormatException ignored) {}
+        }
+        return null;
     }
 
     private Integer getTagAsInteger(PointValues pv, String tagKey, Integer defaultValue) {
         Object val = pv.getTag(tagKey);
+        if (val == null) val = pv.getField(tagKey);
         if (val != null) {
-            try {
-                return Integer.valueOf(val.toString());
-            } catch (NumberFormatException e) {
-                return defaultValue;
-            }
+            try { return Integer.valueOf(val.toString()); } catch (NumberFormatException e) { return defaultValue; }
         }
         return defaultValue;
     }

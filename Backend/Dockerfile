@@ -9,5 +9,7 @@ RUN mvn clean package -DskipTests
 FROM eclipse-temurin:21-jre
 WORKDIR /app
 COPY --from=builder /app/target/*.jar app.jar
+
+ENV JAVA_TOOL_OPTIONS="--add-opens=java.base/java.nio=org.apache.arrow.memory.core,ALL-UNNAMED"
 EXPOSE 8080
 ENTRYPOINT ["java", "-jar", "app.jar"]

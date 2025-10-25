@@ -3,14 +3,12 @@ package com.hydro.watertap.controller;
 import com.hydro.watertap.model.dto.SensorRecordDTO;
 import com.hydro.watertap.service.SensorDataService;
 import io.swagger.v3.oas.annotations.tags.Tag;
-import org.springframework.format.annotation.DateTimeFormat;
 import org.springframework.http.MediaType;
 import org.springframework.web.bind.annotation.*;
 import reactor.core.publisher.Flux;
 
-import java.time.Duration;
-import java.time.Instant;
-import java.time.LocalDateTime;
+import java.time.*;
+import java.time.temporal.ChronoUnit;
 import java.util.List;
 
 @RestController
@@ -41,6 +39,52 @@ public class SensorController {
             @RequestParam("to") Instant to
     ) {
         return sensorDataService.getHistory(from, to);
+    }
+
+    @GetMapping("/history/since")
+    public List<SensorRecordDTO> getHistorySince(
+            @RequestParam(name = "amount") int amount,
+            @RequestParam(name = "unit") String unit,
+            @RequestParam(name = "agg", required = false) String agg
+    ) {
+        if (amount <= 0) amount = 1;
+        ChronoUnit chrono = parseUnit(unit);
+        Instant to = Instant.now();
+        Instant from = to.minus(amount, chrono);
+        if (agg != null && !agg.isBlank()) {
+            return sensorDataService.getAggregatedHistory(from, to, agg);
+        }
+        return sensorDataService.getHistory(from, to);
+    }
+
+    private ChronoUnit parseUnit(String unit) {
+        if (unit == null) return ChronoUnit.HOURS;
+        String u = unit.trim().toLowerCase();
+        switch (u) {
+            case "m":
+            case "min":
+            case "mins":
+            case "minute":
+            case "minutes":
+            case "minuto":
+            case "minutos":
+                return ChronoUnit.MINUTES;
+            case "h":
+            case "hr":
+            case "hour":
+            case "hours":
+            case "hora":
+            case "horas":
+                return ChronoUnit.HOURS;
+            case "d":
+            case "day":
+            case "days":
+            case "dia":
+            case "dias":
+                return ChronoUnit.DAYS;
+            default:
+                return ChronoUnit.HOURS;
+        }
     }
 
     @PostMapping("/upload")

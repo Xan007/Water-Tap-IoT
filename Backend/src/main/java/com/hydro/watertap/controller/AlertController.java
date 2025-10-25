@@ -26,6 +26,9 @@ public class AlertController {
         return alertService.getAlertStreamWithSnapshot();
     }
 
+    @GetMapping
+    public List<SensorAlertEntity> getActive() { return alertService.getActiveAlerts(); }
+
     @PostMapping
     public SensorAlertEntity createAlert(@RequestBody SensorAlertEntity alert) {
         alert.setId(null);
@@ -36,5 +39,11 @@ public class AlertController {
     @PostMapping("/{id}/deactivate")
     public void deactivateAlert(@PathVariable Long id) {
         alertService.deactivateAlert(id);
+    }
+
+    // Borrar alerta
+    @DeleteMapping("/{id}")
+    public void deleteAlert(@PathVariable Long id) {
+        alertService.removeAlert(id);
     }
 }

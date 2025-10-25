@@ -3,16 +3,21 @@ name: Simulate data
 on:
   workflow_dispatch:
     inputs:
-      start_date:
-        description: "Fecha inicio (YYYY-MM-DD)"
-        required: false
-      end_date:
-        description: "Fecha fin (YYYY-MM-DD)"
-        required: false
-      num_sensors:
+      sensors:
         description: "Número de sensores"
         required: false
         default: "4"
+      interval_seconds:
+        description: "Intervalo en segundos entre lecturas"
+        required: false
+        default: "5"
+      duration:
+        description: "Duración total (e.g. 1h, 30m, 45s)."
+        required: false
+        default: "5m"
+      seed:
+        description: "Semilla aleatoria (opcional)"
+        required: false
 
 jobs:
   simulate:
@@ -20,12 +25,12 @@ jobs:
 
     steps:
       - name: Checkout repo
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
 
       - name: Set up Python
-        uses: actions/setup-python@v4
+        uses: actions/setup-python@v5
         with:
-          python-version: 3.11
+          python-version: '3.11'
 
       - name: Install dependencies
         run: |
@@ -37,8 +42,20 @@ jobs:
           INFLUXDB_URL: ${{ secrets.INFLUX_URL }}
           INFLUXDB_TOKEN: ${{ secrets.INFLUXDB_TOKEN }}
           INFLUXDB_ORG: ${{ secrets.INFLUXDB_ORG }}
-          START_DATE: ${{ github.event.inputs.start_date }}
-          END_DATE: ${{ github.event.inputs.end_date }}
-          NUM_SENSORS: ${{ github.event.inputs.num_sensors }}
+          INFLUXDB_BUCKET: ${{ secrets.INFLUX_BUCKET }}
+        shell: bash
         run: |
-          python .github/scripts/simulate_data.py
+          set -euo pipefail
+          CMD=(python .github/scripts/simulate_data.py \
+            --sensors "${{ github.event.inputs.sensors }}" \
+            --interval "${{ github.event.inputs.interval_seconds }}")
+
+          if [[ -n "${{ github.event.inputs.duration }}" ]]; then
+            CMD+=(--duration "${{ github.event.inputs.duration }}")
+          fi
+          if [[ -n "${{ github.event.inputs.seed }}" ]]; then
+            CMD+=(--seed "${{ github.event.inputs.seed }}")
+          fi
+
+          echo "Running: ${CMD[@]}"
+          "${CMD[@]}"

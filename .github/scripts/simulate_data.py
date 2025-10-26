@@ -3,6 +3,7 @@ import random
 import time
 from argparse import ArgumentParser
 from datetime import datetime, timezone
+from zoneinfo import ZoneInfo
 from typing import Optional
 
 from influxdb_client import InfluxDBClient, Point, WriteOptions
@@ -25,8 +26,19 @@ def parse_duration(s: Optional[str]) -> Optional[float]:
     raise ValueError(f"Duración inválida: {s}")
 
 
-def now_utc() -> datetime:
-    return datetime.now(timezone.utc)
+def now_bogota() -> datetime:
+    """Fecha/hora actual en la zona horaria de Bogotá (configurable por env).
+
+    Prioriza la variable de entorno SIM_TIMEZONE o TZ si están definidas; por
+    defecto usa 'America/Bogota'. Retorna un datetime consciente de zona.
+    """
+    tz_name = os.environ.get('SIM_TIMEZONE') or os.environ.get('TZ') or 'America/Bogota'
+    try:
+        tz = ZoneInfo(tz_name)
+    except Exception:
+        # Fallback seguro a UTC si la zona no existe en el entorno
+        tz = timezone.utc
+    return datetime.now(tz)
 
 
 class SensorSimulator:
@@ -199,7 +211,7 @@ def run(sim: SensorSimulator, interval: float, duration: Optional[float], influx
     try:
         while True:
             for sensor_id in range(1, sim.n + 1):
-                ts = now_utc()
+                ts = now_bogota()
                 r = sim.sample(sensor_id, ts, interval)
                 p = Point("water_sensors").tag("sensor_id", str(r['sensor_id'])) \
                     .field("flowRate", float(r['flowRate'])) \

@@ -55,6 +55,7 @@ jobs:
 
       - name: Run Simulator
         env:
+          TZ: America/Bogota
           INFLUXDB_URL: ${{ secrets.INFLUX_URL }}
           INFLUXDB_TOKEN: ${{ secrets.INFLUXDB_TOKEN }}
           INFLUXDB_ORG: ${{ secrets.INFLUXDB_ORG }}

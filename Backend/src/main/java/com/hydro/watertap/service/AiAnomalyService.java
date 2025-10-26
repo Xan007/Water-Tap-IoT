@@ -14,6 +14,7 @@ import org.springframework.beans.factory.annotation.Value;
 
 import java.time.Instant;
 import java.time.LocalDateTime;
+import java.time.ZoneId;
 import java.time.ZoneOffset;
 import java.util.*;
 
@@ -47,8 +48,8 @@ public class AiAnomalyService {
         try {
             if (!settingsService.isAiEnabled()) return;
 
-            // Hora local para reglas de trabajo
-            LocalDateTime nowLocal = LocalDateTime.now();
+            ZoneId bogota = ZoneId.of("America/Bogota");
+            LocalDateTime nowLocal = LocalDateTime.now(bogota);
             boolean workTime = settingsService.isWorkTime(nowLocal);
 
             // Obtener últimos 10 minutos de datos crudos

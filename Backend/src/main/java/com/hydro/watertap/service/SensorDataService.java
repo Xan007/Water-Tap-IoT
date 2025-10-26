@@ -15,6 +15,8 @@ import org.springframework.stereotype.Service;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.Comparator;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.stream.Stream;
@@ -154,5 +156,69 @@ public class SensorDataService {
             try { return Integer.valueOf(val.toString()); } catch (NumberFormatException e) { return defaultValue; }
         }
         return defaultValue;
+    }
+
+    public List<SensorRecordDTO> getRawHistory(Instant from, Instant to) {
+        String sql = "SELECT * FROM 'water_sensors' WHERE time >= :from AND time <= :to ORDER BY time ASC";
+        Map<String, Object> params = Map.of(
+                "from", from.toString(),
+                "to", to.toString()
+        );
+        log.debug("Influx SQL raw history: {} {}", sql, params);
+        return querySensorData(sql, params);
+    }
+
+    /**
+     * Agrega en memoria los datos crudos en intervalos del tamaño dado (bucket), promediando por sensor.
+     */
+    public List<SensorRecordDTO> getHistoryAggregatedInMemory(Instant from, Instant to, Duration bucket) {
+        List<SensorRecordDTO> raw = getHistory(from, to);
+        return aggregateList(raw, bucket);
+    }
+
+    /**
+     * Igual que el anterior pero forzando a traer historial crudo (sin vistas agregadas) antes de agregar.
+     */
+    public List<SensorRecordDTO> getRawHistoryAggregatedInMemory(Instant from, Instant to, Duration bucket) {
+        List<SensorRecordDTO> raw = getRawHistory(from, to);
+        return aggregateList(raw, bucket);
+    }
+
+    private List<SensorRecordDTO> aggregateList(List<SensorRecordDTO> raw, Duration bucket) {
+        if (bucket == null || bucket.isZero() || bucket.isNegative()) bucket = Duration.ofMinutes(10);
+        long bucketMs = bucket.toMillis();
+        Map<String, Agg> acc = new LinkedHashMap<>();
+        for (SensorRecordDTO r : raw) {
+            if (r.timestamp() == null || r.sensorId() == null) continue;
+            long startMs = (r.timestamp().toEpochMilli() / bucketMs) * bucketMs;
+            String key = r.sensorId() + "|" + startMs;
+            Agg a = acc.computeIfAbsent(key, k -> new Agg(r.sensorId(), startMs));
+            if (r.ph() != null) { a.phSum += r.ph(); a.phCnt++; }
+            if (r.turbidity() != null) { a.turbSum += r.turbidity(); a.turbCnt++; }
+            if (r.conductivity() != null) { a.condSum += r.conductivity(); a.condCnt++; }
+            if (r.flowRate() != null) { a.flowSum += r.flowRate(); a.flowCnt++; }
+        }
+        List<SensorRecordDTO> out = new ArrayList<>(acc.size());
+        for (Agg a : acc.values()) {
+            out.add(new SensorRecordDTO(
+                    Instant.ofEpochMilli(a.startMs),
+                    a.sensorId,
+                    a.phCnt > 0 ? a.phSum / a.phCnt : null,
+                    a.turbCnt > 0 ? a.turbSum / a.turbCnt : null,
+                    a.condCnt > 0 ? a.condSum / a.condCnt : null,
+                    a.flowCnt > 0 ? a.flowSum / a.flowCnt : null
+            ));
+        }
+        out.sort(Comparator.comparing(SensorRecordDTO::timestamp).thenComparing(SensorRecordDTO::sensorId));
+        return out;
+    }
+
+    private static class Agg {
+        final int sensorId; final long startMs;
+        double phSum = 0; int phCnt = 0;
+        double turbSum = 0; int turbCnt = 0;
+        double condSum = 0; int condCnt = 0;
+        double flowSum = 0; int flowCnt = 0;
+        Agg(int sid, long ms) { this.sensorId = sid; this.startMs = ms; }
     }
 }

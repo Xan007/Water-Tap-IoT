@@ -15,7 +15,11 @@ public class InfluxProperties {
     @Value("${influx.token}")
     private String token;
 
+    @Value("${influx.org:}")
+    private String org;
+
     public String getUrl() { return url; }
     public String getDatabase() { return database; }
     public String getToken() { return token; }
+    public String getOrg() { return org; }
 }

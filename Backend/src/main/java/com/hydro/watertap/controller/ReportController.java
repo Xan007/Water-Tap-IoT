@@ -1,6 +1,7 @@
 package com.hydro.watertap.controller;
 
 import com.hydro.watertap.service.PdfReportService;
+import com.hydro.watertap.service.CsvReportService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import org.springframework.http.HttpHeaders;
@@ -16,13 +17,15 @@ import java.time.temporal.ChronoUnit;
 
 @RestController
 @RequestMapping("/reports")
-@Tag(name = "Reports", description = "Generación de reportes PDF de sensores")
+@Tag(name = "Reports", description = "Generación de reportes PDF y CSV de sensores")
 public class ReportController {
 
     private final PdfReportService reportService;
+    private final CsvReportService csvReportService;
 
-    public ReportController(PdfReportService reportService) {
+    public ReportController(PdfReportService reportService, CsvReportService csvReportService) {
         this.reportService = reportService;
+        this.csvReportService = csvReportService;
     }
 
     @GetMapping(produces = MediaType.APPLICATION_PDF_VALUE)
@@ -46,6 +49,26 @@ public class ReportController {
                 .body(pdf);
     }
 
+    @GetMapping(value = "/csv", produces = "text/csv")
+    @Operation(summary = "Genera un reporte CSV", description = "CSV con datos crudos y estadísticas por buckets. Parámetros: amount (int), unit (m|h|d)")
+    public ResponseEntity<byte[]> generateCsv(
+            @RequestParam(name = "amount", defaultValue = "1") int amount,
+            @RequestParam(name = "unit", defaultValue = "d") String unit
+    ) {
+        if (amount <= 0) amount = 1;
+        ChronoUnit chrono = parseUnit(unit);
+        Instant to = Instant.now();
+        Instant from = to.minus(amount, chrono);
+
+        byte[] csv = csvReportService.generateCsv(from, to);
+        String filename = "reporte-" + unit + amount + ".csv";
+
+        return ResponseEntity.ok()
+                .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=" + filename)
+                .contentType(MediaType.parseMediaType("text/csv"))
+                .body(csv);
+    }
+
     private ChronoUnit parseUnit(String unit) {
         if (unit == null) return ChronoUnit.DAYS;
         String u = unit.trim().toLowerCase();
@@ -60,4 +83,3 @@ public class ReportController {
         }
     }
 }
-

@@ -18,7 +18,6 @@ import java.time.format.DateTimeFormatter;
 import java.time.temporal.ChronoUnit;
 import java.util.*;
 import java.util.List;
-import java.util.stream.Collectors;
 
 @Service
 public class PdfReportService {
@@ -43,11 +42,11 @@ public class PdfReportService {
         long minutes = ChronoUnit.MINUTES.between(from, to);
         int bucketMinutes = minutes < 12 * 60 ? 15 : 60;
 
-        // Fuente de datos según política: >3 días usa vista 1h; <=3 días usa crudo
         List<SensorRecordDTO> input;
         if (days > 3) {
-            input = sensorDataService.getAggregatedHistory(from, to, "1h");
-            bucketMinutes = 60; // en vista 1h no tiene sentido 15m
+            List<SensorRecordDTO> tenMin = sensorDataService.getRawHistoryAggregatedInMemory(from, to, Duration.ofMinutes(10));
+            input = tenMin;
+            bucketMinutes = 60; // consolidaremos por hora en el PDF
         } else {
             input = sensorDataService.getRawHistory(from, to);
         }
@@ -97,6 +96,15 @@ public class PdfReportService {
                 PdfPTable table = buildBucketStatsTable(rows);
                 table.setSpacingAfter(4f);
                 doc.add(table);
+
+                // Resumen estadístico por sensor
+                Paragraph sumHeader = new Paragraph("Resumen estadístico", new Font(Font.HELVETICA, 11, Font.BOLD));
+                sumHeader.setSpacingBefore(2f);
+                sumHeader.setSpacingAfter(2f);
+                doc.add(sumHeader);
+                PdfPTable summary = buildSummaryTable(rows, bucketMinutes);
+                summary.setSpacingAfter(8f);
+                doc.add(summary);
 
                 processed++;
                 if (processed < total) doc.newPage();
@@ -188,6 +196,70 @@ public class PdfReportService {
             zebra = !zebra;
         }
         return table;
+    }
+
+    private PdfPTable buildSummaryTable(List<BucketStat> rows, int bucketMinutes) {
+        PdfPTable t = new PdfPTable(2);
+        t.setWidthPercentage(80);
+        try { t.setWidths(new float[]{2.2f, 4.8f}); } catch (DocumentException ignored) {}
+
+        Instant first = rows.get(0).bucketStart;
+        Instant last = rows.get(rows.size() - 1).bucketStart.plus(Duration.ofMinutes(bucketMinutes));
+        int n = rows.size();
+
+        Double avgFlow = mean(rows, r -> r.avgFlow);
+        Double minFlow = min(rows, r -> r.minFlow);
+        Double maxFlow = max(rows, r -> r.maxFlow);
+
+        Double avgPh = mean(rows, r -> r.avgPh);
+        Double minPh = min(rows, r -> r.minPh);
+        Double maxPh = max(rows, r -> r.maxPh);
+
+        Double avgT = mean(rows, r -> r.avgTurb);
+        Double minT = min(rows, r -> r.minTurb);
+        Double maxT = max(rows, r -> r.maxTurb);
+
+        Double avgC = mean(rows, r -> r.avgCond);
+        Double minC = min(rows, r -> r.minCond);
+        Double maxC = max(rows, r -> r.maxCond);
+
+        addKV(t, "Intervalos analizados", n + " (" + bucketMinutes + " min)");
+        addKV(t, "Cobertura", friendlyRange(first, last));
+        addKV(t, "Flujo (L/min)", "Promedio: " + fmtDouble(avgFlow) + "  |  Min: " + fmtDouble(minFlow) + "  |  Max: " + fmtDouble(maxFlow));
+        addKV(t, "pH", "Promedio: " + fmtDouble(avgPh) + "  |  Min: " + fmtDouble(minPh) + "  |  Max: " + fmtDouble(maxPh));
+        addKV(t, "Turbidez (NTU)", "Promedio: " + fmtDouble(avgT) + "  |  Min: " + fmtDouble(minT) + "  |  Max: " + fmtDouble(maxT));
+        addKV(t, "Conductividad (µS/cm)", "Promedio: " + fmtDouble(avgC) + "  |  Min: " + fmtDouble(minC) + "  |  Max: " + fmtDouble(maxC));
+
+        return t;
+    }
+
+    private interface ToDouble {
+        Double get(BucketStat r);
+    }
+    private Double mean(List<BucketStat> rows, ToDouble f) {
+        double s = 0; int c = 0;
+        for (BucketStat r : rows) { Double v = f.get(r); if (v != null) { s += v; c++; } }
+        return c == 0 ? null : s / c;
+    }
+    private Double min(List<BucketStat> rows, ToDouble f) {
+        Double m = null;
+        for (BucketStat r : rows) { Double v = f.get(r); if (v != null) m = (m == null) ? v : Math.min(m, v); }
+        return m;
+    }
+    private Double max(List<BucketStat> rows, ToDouble f) {
+        Double m = null;
+        for (BucketStat r : rows) { Double v = f.get(r); if (v != null) m = (m == null) ? v : Math.max(m, v); }
+        return m;
+    }
+
+    private void addKV(PdfPTable t, String key, String val) {
+        PdfPCell k = new PdfPCell(new Phrase(key, new Font(Font.HELVETICA, 8, Font.BOLD)));
+        k.setBackgroundColor(new Color(245, 247, 250));
+        k.setPadding(4f);
+        t.addCell(k);
+        PdfPCell v = new PdfPCell(new Phrase(val, new Font(Font.HELVETICA, 8)));
+        v.setPadding(4f);
+        t.addCell(v);
     }
 
     private void addHeaderSpan(PdfPTable table, String txt, int colspan) {

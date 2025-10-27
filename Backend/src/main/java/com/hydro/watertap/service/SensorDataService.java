@@ -1,7 +1,10 @@
 package com.hydro.watertap.service;
 
+import com.hydro.watertap.config.InfluxProperties;
 import com.hydro.watertap.model.dto.SensorRawRecord;
 import com.hydro.watertap.model.dto.SensorRecordDTO;
+import com.hydro.watertap.model.entity.InfluxExclusionRange;
+import com.hydro.watertap.repository.InfluxExclusionRangeRepository;
 import com.influxdb.v3.client.InfluxDBClient;
 import com.influxdb.v3.client.Point;
 import com.influxdb.v3.client.PointValues;
@@ -27,15 +30,46 @@ public class SensorDataService {
     private static final Logger log = LoggerFactory.getLogger(SensorDataService.class);
 
     private final InfluxDBClient influxDBClient;
+    private final InfluxProperties influxProperties;
+    private final InfluxExclusionRangeRepository exclusionRepo;
 
-    public SensorDataService(InfluxDBClient influxDBClient) {
+    public SensorDataService(InfluxDBClient influxDBClient, InfluxProperties influxProperties, InfluxExclusionRangeRepository exclusionRepo) {
         this.influxDBClient = influxDBClient;
+        this.influxProperties = influxProperties;
+        this.exclusionRepo = exclusionRepo;
+    }
+
+    private List<SensorRecordDTO> applyExclusions(List<SensorRecordDTO> data, Instant from, Instant to) {
+        if (data == null || data.isEmpty()) return data;
+        // recopilar sensorIds presentes
+        List<Integer> sensorIds = data.stream()
+                .map(SensorRecordDTO::sensorId)
+                .filter(java.util.Objects::nonNull)
+                .distinct()
+                .toList();
+        if (sensorIds.isEmpty()) return data;
+        List<InfluxExclusionRange> ranges = exclusionRepo.findOverlapping(sensorIds, from, to);
+        if (ranges.isEmpty()) return data;
+        return data.stream().filter(r -> {
+            if (r.sensorId() == null || r.timestamp() == null) return true;
+            Instant ts = r.timestamp();
+            for (InfluxExclusionRange ex : ranges) {
+                if (ex.getSensorId() != null && ex.getSensorId().equals(r.sensorId())) {
+                    if (!ts.isBefore(ex.getStartTime()) && !ts.isAfter(ex.getEndTime())) {
+                        return false; // excluir
+                    }
+                }
+            }
+            return true;
+        }).toList();
     }
 
     public List<SensorRecordDTO> getRecentSensorData(Integer minutes) {
         String sql = "SELECT * FROM 'water_sensors' WHERE time >= now() - interval '" + minutes + " minutes' ORDER BY time ASC";
-        log.debug("Influx SQL recent: {}", sql);
-        return querySensorData(sql, Map.of());
+        List<SensorRecordDTO> out = querySensorData(sql, Map.of());
+        Instant to = Instant.now();
+        Instant from = to.minus(Duration.ofMinutes(minutes));
+        return applyExclusions(out, from, to);
     }
 
     public List<SensorRecordDTO> getHistory(Instant from, Instant to) {
@@ -54,8 +88,8 @@ public class SensorDataService {
         } else {
             sql = "SELECT * FROM 'view_sensors' WHERE time >= :from AND time <= :to AND agg = '1d' ORDER BY time ASC";
         }
-        log.debug("Influx SQL history: {} {}", sql, params);
-        return querySensorData(sql, params);
+        List<SensorRecordDTO> out = querySensorData(sql, params);
+        return applyExclusions(out, from, to);
     }
 
     /**
@@ -69,24 +103,8 @@ public class SensorDataService {
                 "to", to.toString(),
                 "agg", agg
         );
-        log.debug("Influx SQL view agg (básico): {} {}", sql, params);
-        return querySensorData(sql, params);
-    }
-
-    private String mapAggToInterval(String agg) {
-        if (agg == null) return "1 hour";
-        String a = agg.trim().toLowerCase();
-        if (a.endsWith("h")) {
-            String n = a.substring(0, a.length() - 1);
-            return n + " hour";
-        } else if (a.endsWith("d")) {
-            String n = a.substring(0, a.length() - 1);
-            return n + " day";
-        } else if (a.endsWith("m")) {
-            String n = a.substring(0, a.length() - 1);
-            return n + " minute";
-        }
-        return "1 hour";
+        List<SensorRecordDTO> out = querySensorData(sql, params);
+        return applyExclusions(out, from, to);
     }
 
     public void saveSensorData(List<SensorRecordDTO> records) {
@@ -158,15 +176,6 @@ public class SensorDataService {
         return defaultValue;
     }
 
-    public List<SensorRecordDTO> getRawHistory(Instant from, Instant to) {
-        String sql = "SELECT * FROM 'water_sensors' WHERE time >= :from AND time <= :to ORDER BY time ASC";
-        Map<String, Object> params = Map.of(
-                "from", from.toString(),
-                "to", to.toString()
-        );
-        log.debug("Influx SQL raw history: {} {}", sql, params);
-        return querySensorData(sql, params);
-    }
 
     /**
      * Agrega en memoria los datos crudos en intervalos del tamaño dado (bucket), promediando por sensor.
@@ -182,6 +191,19 @@ public class SensorDataService {
     public List<SensorRecordDTO> getRawHistoryAggregatedInMemory(Instant from, Instant to, Duration bucket) {
         List<SensorRecordDTO> raw = getRawHistory(from, to);
         return aggregateList(raw, bucket);
+    }
+
+    /**
+     * Retorna historial crudo desde la medición 'water_sensors' en el rango [from, to], ordenado ascendente.
+     */
+    public List<SensorRecordDTO> getRawHistory(Instant from, Instant to) {
+        String sql = "SELECT * FROM 'water_sensors' WHERE time >= :from AND time <= :to ORDER BY time ASC";
+        Map<String, Object> params = Map.of(
+                "from", from.toString(),
+                "to", to.toString()
+        );
+        List<SensorRecordDTO> out = querySensorData(sql, params);
+        return applyExclusions(out, from, to);
     }
 
     private List<SensorRecordDTO> aggregateList(List<SensorRecordDTO> raw, Duration bucket) {
@@ -211,6 +233,31 @@ public class SensorDataService {
         }
         out.sort(Comparator.comparing(SensorRecordDTO::timestamp).thenComparing(SensorRecordDTO::sensorId));
         return out;
+    }
+
+    /**
+     * Registra rangos de exclusión (borrado lógico) por sensor en la base de datos local,
+     * para que al consultar se ignoren esos datos en memoria.
+     * Devuelve cuántos rangos se registraron correctamente.
+     */
+    public int deleteData(List<Integer> sensorIds, Instant from, Instant to) {
+        if (sensorIds == null || sensorIds.isEmpty()) {
+            throw new IllegalArgumentException("Debe indicar al menos un sensorId");
+        }
+        Instant start = from != null ? from : Instant.EPOCH;
+        Instant end = to != null ? to : Instant.now();
+        int count = 0;
+        for (Integer sid : sensorIds) {
+            if (sid == null) continue;
+            try {
+                InfluxExclusionRange ex = new InfluxExclusionRange(sid, start, end);
+                exclusionRepo.save(ex);
+                count++;
+            } catch (Exception e) {
+                log.warn("No se pudo registrar exclusión para sensor_id={} de {} a {}: {}", sid, start, end, e.getMessage());
+            }
+        }
+        return count;
     }
 
     private static class Agg {

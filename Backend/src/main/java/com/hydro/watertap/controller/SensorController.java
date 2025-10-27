@@ -1,5 +1,6 @@
 package com.hydro.watertap.controller;
 
+import com.hydro.watertap.model.dto.DeleteRequest;
 import com.hydro.watertap.model.dto.SensorRecordDTO;
 import com.hydro.watertap.service.SensorDataService;
 import io.swagger.v3.oas.annotations.tags.Tag;
@@ -90,5 +91,14 @@ public class SensorController {
     @PostMapping("/upload")
     public void uploadSensorData(@RequestBody List<SensorRecordDTO> records) {
         sensorDataService.saveSensorData(records);
+    }
+
+    @DeleteMapping("/data")
+    public int deleteData(@RequestBody DeleteRequest req) {
+        return sensorDataService.deleteData(
+                req.getSensorIds(),
+                req.getFrom(),
+                req.getTo()
+        );
     }
 }
